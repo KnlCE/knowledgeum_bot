@@ -1,0 +1,15 @@
+pip ~= 22.3.1
+setuptools ~= 68.0.0
+wheel ~= 0.40.0
+ffmpeg-python ~=0.2.0
+imageio_ffmpeg ~= 0.5.1
+pydub ~= 0.25.1
+SpeechRecognition ~= 3.10.0
+SQLAlchemy~=2.0.19
+openai~=0.27.8
+aiogram~=2.25.1
+python-dotenv~=1.0.0
+Levenshtein~=0.26.0
+fuzzywuzzy~=0.18.0
+python-Levenshtein~=0.26.0
+rapidfuzz~=3.10.0

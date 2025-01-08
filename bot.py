@@ -33,6 +33,8 @@ nl = "\n"
 
 
 class States(StatesGroup):
+    """Набор состояний для Dispatcher."""
+
     add_marker = State()
     add_note = State()
     search = State()
@@ -52,6 +54,8 @@ dp = Dispatcher(bot, storage=MemoryStorage())
                     state=[States.search, States.add_marker, States.add_note, States.add_marker_voice,
                            States.add_note_voice])
 async def voice_message_handler(message: types.Message, state: FSMContext):
+    """Обработчик сообщения, содержащего голосовое сообщение."""
+
     voice = await message.voice.get_file()
     file = await bot.download_file(voice.file_path)
 
@@ -144,6 +148,8 @@ async def voice_message_handler(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_note_'), state='*')
 async def process_edit_note(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик нажатия на кнопку редактирования заметки."""
+
     marker_id = callback_query.data.split('_')[-1]
     await state.update_data(editing_marker_id=marker_id)
 
@@ -159,6 +165,8 @@ async def process_edit_note(callback_query: types.CallbackQuery, state: FSMConte
 
 @dp.message_handler(state=States.choose_note_to_edit)
 async def choose_note_to_edit(message: types.Message, state: FSMContext):
+    """Обработчик выбора заметки для редактирования."""
+
     try:
         note_index = int(message.text)
         user_data = await state.get_data()
@@ -182,6 +190,8 @@ async def choose_note_to_edit(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=States.edit_note_text)
 async def save_edited_note(message: types.Message, state: FSMContext):
+    """Обработчик, который сохраняет отредактированную заметку."""
+
     user_data = await state.get_data()
     note_id = user_data['editing_note_id']
     new_text = message.text
@@ -193,6 +203,8 @@ async def save_edited_note(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data == 'save_ai_response', state='*')
 async def save_ai_response(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик для сохранения ответа от ИИ."""
+
     user_data = await state.get_data()
     ai_response = user_data.get('ai_response')
 
@@ -225,6 +237,8 @@ async def save_ai_response(callback_query: types.CallbackQuery, state: FSMContex
 
 @dp.message_handler(commands=["start", "search"], state='*')
 async def commands(message: types.Message, state: FSMContext):
+    """Обработчик команд /start и /search."""
+
     com = message.get_command()
 
     if com == '/start':
@@ -264,6 +278,8 @@ async def commands(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=States.search)
 async def state_case_met(message: types.Message, state: FSMContext):
+    """Обработчик для добавления новой папки (каталога)."""
+
     await bot.send_message(message.from_user.id, "Ищу...")
     try:
         tree = db.get_tree(message.from_user.id)
@@ -287,8 +303,8 @@ async def state_case_met(message: types.Message, state: FSMContext):
             ai_response = chat_gpt_query(prompt)
 
             # Create save button
-            kb = InlineKeyboardMarkup()
-            kb.add(InlineKeyboardButton("💾 Сохранить ответ в базу", callback_data="save_ai_response"))
+            # kb = InlineKeyboardMarkup()
+            # kb.add(InlineKeyboardButton("💾 Сохранить ответ в базу", callback_data="save_ai_response"))
 
             # Save response for later use
             await state.update_data(ai_response=ai_response, user_query=message.text)
@@ -297,7 +313,7 @@ async def state_case_met(message: types.Message, state: FSMContext):
             await bot.send_message(
                 message.from_user.id,
                 f"🤖 Сгенерированный ответ:\n\n{ai_response}",
-                reply_markup=kb,
+                # reply_markup=kb,
                 parse_mode=None
             )
 
@@ -310,6 +326,8 @@ async def state_case_met(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=States.add_marker)
 async def state_case_met(message: types.Message, state: FSMContext):
+    """Обработчик для добавления новой заметки."""
+
     user_data = await state.get_data()
     if head_marker_id := user_data["head_marker_id"]:
         db.create_marker(message.from_user.id, message.text, head_marker_id)
@@ -325,6 +343,8 @@ async def state_case_met(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=States.add_note)
 async def state_case_met(message: types.Message, state: FSMContext):
+    """Обработчик для добавления новой заметки."""
+
     user_data = await state.get_data()
     if not (head_marker_id := user_data["head_marker_id"]):
         await bot.send_message(message.from_user.id,
@@ -341,6 +361,8 @@ async def state_case_met(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=States.del_note)
 async def state_case_met(message: types.Message, state: FSMContext):
+    """Обработчик для удаления заметки."""
+
     await bot.send_message(message.from_user.id, f"Удаляю...", )
     user_data = await state.get_data()
     if not (marker_id := user_data["in_marker"]):
@@ -363,6 +385,8 @@ async def state_case_met(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda callback_query: True, state='*')
 async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик для обработки колбек-запросов."""
+
     if str(callback_query.data).startswith('list_marker_'):
         await state.update_data(last_menu=str(callback_query.data))
         markers_kb = InlineKeyboardMarkup()

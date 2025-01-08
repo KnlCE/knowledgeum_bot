@@ -16,6 +16,7 @@ session = Session()
 
 
 def create_marker(user_id, name, parent_marker=None):
+    """Функция для создания маркера."""
     user_id = str(user_id)
     if parent_marker and not session.scalars(
             select(Marker).where(Marker.id == int(parent_marker))).first().user_id == user_id:
@@ -28,6 +29,7 @@ def create_marker(user_id, name, parent_marker=None):
 
 
 def delete_marker(user_id, marker_id):
+    """Удаление маркера."""
     user_id = str(user_id)
     if (maker := session.scalars(select(Marker).where(Marker.id == int(marker_id))).first()).user_id == user_id:
         maker.delete()
@@ -36,6 +38,7 @@ def delete_marker(user_id, marker_id):
 
 
 def create_note(user_id, marker_id, value):
+    """Создание заметки."""
     with Session() as session:
         note = Note(user_id=str(user_id), value=value, marker=marker_id)
         session.add(note)
@@ -44,6 +47,7 @@ def create_note(user_id, marker_id, value):
 
 
 def delete_note(user_id, note_id):
+    """Удаление заметки."""
     user_id = str(user_id)
     note = session.scalars(select(Note).where(Note.id == int(note_id))).first()
     if note.get_marker().user_id == user_id:
@@ -53,23 +57,27 @@ def delete_note(user_id, note_id):
 
 
 def delete_note_pos(user_id, marker_id, note_pos):
+    """Удаление заметки по позиции в списке."""
     notes = get_notes(user_id, marker_id)
     note_id = notes[int(note_pos)]["id"]
     delete_note(user_id, note_id)
 
 def get_root_markers(user_id) -> List[Marker]:
+    """Получение корневых маркеров пользователя."""
     markers = session.scalars(select(Marker).filter(and_(Marker.user_id == str(user_id)), Marker.parent == None))
     # markers = [i.to_dict() for i in markers]
     return markers
 
 
 def get_child_markers(user_id, marker):
+    """Получение дочерних маркеров для конкретного маркера."""
     markers = session.scalars(select(Marker).where(Marker.user_id == str(user_id)).filter(Marker.parent == int(marker)))
     # markers = [i.to_dict() for i in markers]
     return markers
 
 
 def get_path(user_id, marker):
+    """Получение полного пути к маркеру."""
     marker = session.scalars(select(Marker).filter(and_(Marker.user_id == str(user_id),
                                                         Marker.id == int(marker)))).first()
     if marker.parent:
@@ -79,12 +87,14 @@ def get_path(user_id, marker):
 
 
 def get_parent_marker(user_id, marker):
+    """Получение родительского маркера."""
     marker = session.scalars(select(Marker).filter(and_(Marker.user_id == str(user_id),
                                                         Marker.id == int(marker)))).first()
     return marker.parent
 
 
 def get_notes_from_location(user_id, location):
+    """Получение заметок по местоположению."""
     if isinstance(location, dict):
         location = location.get('content', '').strip()
     path = [i for i in location.split("/") if i]

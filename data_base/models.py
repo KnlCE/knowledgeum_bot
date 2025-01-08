@@ -13,8 +13,9 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 
-# Определяем класс Marker
 class Marker(Base):
+    """Базовый класс определяющий маркер."""
+
     __tablename__ = 'marker'
 
     id = Column(Integer, primary_key=True, autoincrement=True, unique=True)
@@ -23,12 +24,15 @@ class Marker(Base):
     parent = mapped_column(ForeignKey(f"{__tablename__}.id"), nullable=True)
 
     def get_childs(self):
+        """Получение дочерних маркеров."""
         return session.scalars(select(Marker).filter_by(parent=self.id)).fetchall()
 
     def get_notes(self):
+        """Получение заметок, связанных с маркером."""
         return session.scalars(select(Note).filter_by(marker=self.id)).fetchall()
 
     def to_dict(self):
+        """Преобразование маркера в словарь."""
         return {
             "marker": self.value,
             "id": self.id,

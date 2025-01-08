@@ -15,7 +15,7 @@ with open("prompts.json", "r", encoding="utf-8") as file:
 
 
 def chat_gpt_query(input_str):
-    """Выполняет запрос к ChatGPT и обрабатывает ответ"""
+    """Выполняет запрос к ChatGPT и обрабатывает ответ."""
     dialog_data = [
         {"role": "system", "content": prompts["start_prompt"]},
         {"role": "user", "content": input_str}
@@ -34,7 +34,7 @@ def chat_gpt_query(input_str):
 
 
 def ask_gpt(context):
-    """Выполняет запрос к API ChatGPT"""
+    """Выполняет запрос к API ChatGPT."""
     response = openai.ChatCompletion.create(
         model=os.getenv("gpt_model", "gpt-3.5-turbo"),
         messages=context,

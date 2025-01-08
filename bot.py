@@ -7,25 +7,23 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters.state import StatesGroup, State
 import json
 import speech_recognition as sr
-import ffmpeg
 import os
 import subprocess
 from datetime import datetime
 from imageio_ffmpeg import get_ffmpeg_exe
-from pydub import AudioSegment
 from dotenv import load_dotenv
+import data_base.utils as db
+from gpt_util import chat_gpt_query
 
 if os.path.isfile(".env"):
     load_dotenv()
     TOKEN = os.getenv("TOKEN")
 else:
     with open(".env", "w") as file:
-        file.write("TOKEN = 'bot_token_here'\nOPENAI_TOKEN = 'openai_token'")
+        file.write("TOKEN='bot_token'\nOPENAI_TOKEN='openai_token'\n"
+                   "gpt_model='gpt_model'\nOPENAI_API_BASE='openai_api_base'")
     print("insert bot token in .env file")
     exit(0)
-
-import data_base.utils as db
-from gpt_util import chat_gpt_query
 
 prompts = {}
 with open("prompts.json", "r", encoding="utf-8") as file:
@@ -33,22 +31,27 @@ with open("prompts.json", "r", encoding="utf-8") as file:
 
 nl = "\n"
 
+
 class States(StatesGroup):
-    add_marker = State()
+    add_catalog = State()
     add_note = State()
     search = State()
     del_note = State()
     edit_note = State()
     edit_note_text = State()
     choose_note_to_edit = State()
-    add_marker_voice = State()
+    add_catalog_voice = State()
     add_note_voice = State()
+
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-@dp.message_handler(content_types=[types.ContentType.VOICE], state=States.search)
-async def voice_search_handler(message: types.Message, state: FSMContext):
+
+@dp.message_handler(content_types=[types.ContentType.VOICE],
+                    state=[States.search, States.add_catalog, States.add_note, States.add_catalog_voice,
+                           States.add_note_voice])
+async def voice_message_handler(message: types.Message, state: FSMContext):
     voice = await message.voice.get_file()
     file = await bot.download_file(voice.file_path)
 
@@ -70,100 +73,81 @@ async def voice_search_handler(message: types.Message, state: FSMContext):
     os.remove(voice_filename)
     os.remove(wav_filename)
 
-    await bot.send_message(message.from_user.id, f"Распознанный текст: {text}\nИщу...")
+    current_state = await state.get_state()
+    if current_state == States.search.state:
+        await bot.send_message(message.from_user.id, f"Распознанный текст: {text}\nИщу...")
 
-    try:
-        tree = db.get_tree(message.from_user.id)
-        location = chat_gpt_query(prompts["ask_file_location"].format(text, tree))
+        try:
+            tree = db.get_tree(message.from_user.id)
+            location = chat_gpt_query(prompts["ask_file_location"].format(text, tree))
 
-        notes = db.get_notes_from_location(message.from_user.id, location) if location else None
-        has_data = notes and isinstance(notes, list) and len(notes) > 0
+            notes = db.get_notes_from_location(message.from_user.id, location) if location else None
+            has_data = notes and isinstance(notes, list) and len(notes) > 0
 
-        if has_data:
-            answer = chat_gpt_query(prompts["read_file"].format(text, notes))
-            await bot.send_message(
-                message.from_user.id,
-                f"📚 Ответ из базы знаний:\n\n{answer}",
-                parse_mode=None
-            )
-        else:
-            prompt = prompts["generate_answer"].format(text)
-            ai_response = chat_gpt_query(prompt)
+            if has_data:
+                answer = chat_gpt_query(prompts["read_file"].format(text, notes))
+                await bot.send_message(
+                    message.from_user.id,
+                    f"📚 Ответ из базы знаний:\n\n{answer}",
+                    parse_mode=None
+                )
+            else:
+                prompt = prompts["generate_answer"].format(text)
+                ai_response = chat_gpt_query(prompt)
 
-            kb = InlineKeyboardMarkup()
-            kb.add(InlineKeyboardButton("💾 Сохранить ответ в базу", callback_data="save_ai_response"))
+                kb = InlineKeyboardMarkup()
+                kb.add(InlineKeyboardButton("💾 Сохранить ответ в базу", callback_data="save_ai_response"))
 
-            await state.update_data(ai_response=ai_response, user_query=text)
+                await state.update_data(ai_response=ai_response, user_query=text)
 
-            await bot.send_message(
-                message.from_user.id,
-                f"🤖 Вот что я знаю:\n\n{ai_response}",
-                reply_markup=kb,
-                parse_mode=None
-            )
+                await bot.send_message(
+                    message.from_user.id,
+                    f"🤖 Вот что я знаю:\n\n{ai_response}",
+                    reply_markup=kb,
+                    parse_mode=None
+                )
 
-    except Exception as err:
-        print(f"От: {message.from_user.id}, Запрос: {text}\nОшибка: {err}")
-        await bot.send_message(message.from_user.id, "🔄 Давайте попробуем переформулировать вопрос")
-    finally:
+        except Exception as err:
+            print(f"От: {message.from_user.id}, Запрос: {text}\nОшибка: {err}")
+            await bot.send_message(message.from_user.id, "🔄 Давайте попробуем переформулировать вопрос")
+        finally:
+            await state.finish()
+
+    else:
+        await bot.send_message(message.from_user.id, f"Распознанный текст: {text}")
+
+        user_data = await state.get_data()
+
+        head_catalog_id = user_data.get("head_catalog_id")
+
+        if current_state in ["States:add_catalog", "States:add_catalog_voice"]:
+            if head_catalog_id:
+                db.create_catalog(message.from_user.id, text, head_catalog_id)
+            else:
+                db.create_catalog(message.from_user.id, text)
+            success_message = f"✅ | Каталог '{text}' добавлен!"
+        elif current_state in ["States:add_note", "States:add_note_voice"]:
+            if head_catalog_id:
+                db.create_note(message.from_user.id, head_catalog_id, text)
+                success_message = f"✅ | Знание '{text}' добавлено!"
+            else:
+                await bot.send_message(message.from_user.id,
+                                       f"🗄 | Знание '{text}' не может быть создано тут(\n"
+                                       f"🗄 | Выберите Каталог и создайте знание в нем")
+                await state.finish()
+                return
+
+        exit_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=user_data.get("last_menu", "")))
+        await bot.send_message(message.from_user.id, success_message, reply_markup=exit_kb)
         await state.finish()
 
-@dp.message_handler(content_types=[types.ContentType.VOICE], state=[States.add_marker, States.add_note, States.add_marker_voice, States.add_note_voice])
-async def voice_add_item_handler(message: types.Message, state: FSMContext):
-    voice = await message.voice.get_file()
-    file = await bot.download_file(voice.file_path)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    voice_filename = f"voice_{timestamp}.ogg"
-    wav_filename = f"voice_{timestamp}.wav"
-
-    with open(voice_filename, "wb") as f:
-        f.write(file.getvalue())
-
-    ffmpeg_exe = get_ffmpeg_exe()
-    subprocess.run([ffmpeg_exe, '-i', voice_filename, wav_filename])
-
-    recognizer = sr.Recognizer()
-    with sr.AudioFile(wav_filename) as source:
-        audio_data = recognizer.record(source)
-        text = recognizer.recognize_google(audio_data, language="ru-RU")
-
-    os.remove(voice_filename)
-    os.remove(wav_filename)
-
-    await bot.send_message(message.from_user.id, f"Распознанный текст: {text}")
-
-    user_data = await state.get_data()
-    current_state = await state.get_state()
-    head_marker_id = user_data.get("head_marker_id")
-
-    if current_state in ["States:add_marker", "States:add_marker_voice"]:
-        if head_marker_id:
-            db.create_marker(message.from_user.id, text, head_marker_id)
-        else:
-            db.create_marker(message.from_user.id, text)
-        success_message = f"✅ | Каталог '{text}' добавлен!"
-    elif current_state in ["States:add_note", "States:add_note_voice"]:
-        if head_marker_id:
-            db.create_note(message.from_user.id, head_marker_id, text)
-            success_message = f"✅ | Знание '{text}' добавлено!"
-        else:
-            await bot.send_message(message.from_user.id,
-                                   f"🗄 | Знание '{text}' не может быть создано тут(\n"
-                                   f"🗄 | Выберите Каталог и создайте знание в нем")
-            await state.finish()
-            return
-
-    exit_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=user_data.get("last_menu", "")))
-    await bot.send_message(message.from_user.id, success_message, reply_markup=exit_kb)
-    await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_note_'), state='*')
 async def process_edit_note(callback_query: types.CallbackQuery, state: FSMContext):
-    marker_id = callback_query.data.split('_')[-1]
-    await state.update_data(editing_marker_id=marker_id)
+    catalog_id = callback_query.data.split('_')[-1]
+    await state.update_data(editing_catalog_id=catalog_id)
 
-    notes = db.get_notes(callback_query.from_user.id, marker_id)
+    notes = db.get_notes(callback_query.from_user.id, catalog_id)
 
     text = "Выберите номер знания для редактирования:\n"
     for i, note in enumerate(notes):
@@ -172,13 +156,14 @@ async def process_edit_note(callback_query: types.CallbackQuery, state: FSMConte
     await bot.edit_message_text(text, callback_query.from_user.id, callback_query.message.message_id)
     await States.choose_note_to_edit.set()
 
+
 @dp.message_handler(state=States.choose_note_to_edit)
 async def choose_note_to_edit(message: types.Message, state: FSMContext):
     try:
         note_index = int(message.text)
         user_data = await state.get_data()
-        marker_id = user_data['editing_marker_id']
-        notes = db.get_notes(message.from_user.id, marker_id)
+        catalog_id = user_data['editing_catalog_id']
+        notes = db.get_notes(message.from_user.id, catalog_id)
 
         if 0 <= note_index < len(notes):
             note = notes[note_index]
@@ -194,6 +179,7 @@ async def choose_note_to_edit(message: types.Message, state: FSMContext):
     except ValueError:
         await bot.send_message(message.from_user.id, "Пожалуйста, введите число.")
 
+
 @dp.message_handler(state=States.edit_note_text)
 async def save_edited_note(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
@@ -204,6 +190,7 @@ async def save_edited_note(message: types.Message, state: FSMContext):
     await bot.send_message(message.from_user.id, "Знание успешно отредактировано!", reply_markup=exit_kb)
     await state.finish()
 
+
 @dp.callback_query_handler(lambda c: c.data == 'save_ai_response', state='*')
 async def save_ai_response(callback_query: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
@@ -211,15 +198,15 @@ async def save_ai_response(callback_query: types.CallbackQuery, state: FSMContex
 
     # Check if "Ответы ИИ" folder exists, create if not
     ai_folder = None
-    root_markers = db.get_root_markers(callback_query.from_user.id)
+    root_catalogs = db.get_root_catalogs(callback_query.from_user.id)
 
-    for marker in root_markers:
-        if marker.value == "Ответы ИИ":
-            ai_folder = marker
+    for catalog in root_catalogs:
+        if catalog.value == "Ответы ИИ":
+            ai_folder = catalog
             break
 
     if not ai_folder:
-        ai_folder = db.create_marker(callback_query.from_user.id, "Ответы ИИ")
+        ai_folder = db.create_catalog(callback_query.from_user.id, "Ответы ИИ")
 
     # Save response in AI folder
     db.create_note(callback_query.from_user.id, ai_folder.id, ai_response)
@@ -229,11 +216,12 @@ async def save_ai_response(callback_query: types.CallbackQuery, state: FSMContex
         callback_query.from_user.id,
         callback_query.message.message_id,
         reply_markup=InlineKeyboardMarkup().add(
-            InlineKeyboardButton("📁 Перейти к папке", callback_data=f"list_marker_{ai_folder.id}"),
-            InlineKeyboardButton("⬅️ К списку", callback_data="list_marker_")
+            InlineKeyboardButton("📁 Перейти к папке", callback_data=f"list_catalog_{ai_folder.id}"),
+            InlineKeyboardButton("⬅️ К списку", callback_data="list_catalog_")
         )
     )
     await state.finish()
+
 
 @dp.message_handler(commands=["start", "search"], state='*')
 async def commands(message: types.Message, state: FSMContext):
@@ -245,7 +233,8 @@ async def commands(message: types.Message, state: FSMContext):
         except:
             pass
 
-        start_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("📕 Открыть хранилище данных", callback_data='list_marker_'))
+        start_kb = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("📕 Открыть хранилище данных", callback_data='list_catalog_'))
 
         image_path = os.path.join('images', 'welcome.jpg')
 
@@ -271,6 +260,7 @@ async def commands(message: types.Message, state: FSMContext):
             pass
         await bot.send_message(message.from_user.id, "Что будем искать сегодня❓")
         await States.search.set()
+
 
 @dp.message_handler(state=States.search)
 async def state_case_met(message: types.Message, state: FSMContext):
@@ -317,13 +307,14 @@ async def state_case_met(message: types.Message, state: FSMContext):
     finally:
         await state.finish()
 
-@dp.message_handler(state=States.add_marker)
+
+@dp.message_handler(state=States.add_catalog)
 async def state_case_met(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
-    if head_marker_id := user_data["head_marker_id"]:
-        db.create_marker(message.from_user.id, message.text, head_marker_id)
+    if head_catalog_id := user_data["head_catalog_id"]:
+        db.create_catalog(message.from_user.id, message.text, head_catalog_id)
     else:
-        db.create_marker(message.from_user.id, message.text)
+        db.create_catalog(message.from_user.id, message.text)
 
     exit_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=user_data["last_menu"]))
     await bot.send_message(message.from_user.id,
@@ -331,32 +322,34 @@ async def state_case_met(message: types.Message, state: FSMContext):
                            reply_markup=exit_kb)
     await state.finish()
 
+
 @dp.message_handler(state=States.add_note)
 async def state_case_met(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
-    if not (head_marker_id := user_data["head_marker_id"]):
+    if not (head_catalog_id := user_data["head_catalog_id"]):
         await bot.send_message(message.from_user.id,
                                f"🗄 | Знание '{message.text}' не может быть создано тут(\n"
                                f"🗄 | Выберите Каталог и создай знание в нем", )
     else:
-        db.create_note(message.from_user.id, head_marker_id, message.text)
+        db.create_note(message.from_user.id, head_catalog_id, message.text)
         exit_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=user_data["last_menu"]))
         await bot.send_message(message.from_user.id,
                                f"✅ | Знание '{message.text}' добавлено!",
                                reply_markup=exit_kb)
     await state.finish()
 
+
 @dp.message_handler(state=States.del_note)
 async def state_case_met(message: types.Message, state: FSMContext):
     await bot.send_message(message.from_user.id, f"Удаляю...", )
     user_data = await state.get_data()
-    if not (marker_id := user_data["in_marker"]):
+    if not (catalog_id := user_data["in_catalog"]):
         await bot.send_message(message.from_user.id,
                                f"🚫 | Ошибка! Знание не удалено!", )
     else:
-        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=f"list_notes_{marker_id}"))
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=f"list_notes_{catalog_id}"))
         try:
-            db.delete_note_pos(user_id=message.from_user.id, marker_id=marker_id, note_pos=message.text)
+            db.delete_note_pos(user_id=message.from_user.id, catalog_id=catalog_id, note_pos=message.text)
             await bot.send_message(message.from_user.id,
                                    "✅ | Знание удалено!",
                                    reply_markup=kb)
@@ -367,69 +360,71 @@ async def state_case_met(message: types.Message, state: FSMContext):
                                    reply_markup=kb)
     await state.finish()
 
+
 @dp.callback_query_handler(lambda callback_query: True, state='*')
 async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext):
-    if str(callback_query.data).startswith('list_marker_'):
+    if str(callback_query.data).startswith('list_catalog_'):
         await state.update_data(last_menu=str(callback_query.data))
-        markers_kb = InlineKeyboardMarkup()
-        head_marker = str(callback_query.data).split("_")[-1]
-        markers = db.get_child_markers(callback_query.from_user.id, head_marker) if head_marker else db.get_root_markers(callback_query.from_user.id)
+        catalogs_kb = InlineKeyboardMarkup()
+        head_catalog = str(callback_query.data).split("_")[-1]
+        catalogs = db.get_child_catalogs(callback_query.from_user.id,
+                                       head_catalog) if head_catalog else db.get_root_catalogs(callback_query.from_user.id)
 
-        for marker in markers:
-            markers_kb.add(InlineKeyboardButton(f"🗂 {marker.value}", callback_data=f"list_marker_{marker.id}"))
+        for catalog in catalogs:
+            catalogs_kb.add(InlineKeyboardButton(f"🗂 {catalog.value}", callback_data=f"list_catalog_{catalog.id}"))
 
-        if head_marker:
-            markers_kb.row(InlineKeyboardButton("+🗄 Каталог", callback_data=f"add_marker_{head_marker}"),
-                          InlineKeyboardButton("+🗒 Знание", callback_data=f"add_note_{head_marker}"))
-            exit_marker = db.get_parent_marker(callback_query.from_user.id, head_marker)
-            markers_kb.add(InlineKeyboardButton("📖 Моя база знаний", callback_data=f"list_notes_{head_marker}"))
-            markers_kb.add(InlineKeyboardButton("❌ Удалить этот Каталог", callback_data=f"del_marker_{head_marker}"))
-            markers_kb.add(InlineKeyboardButton("⬅️", callback_data=f"list_marker_{exit_marker or ''}"))
-            marker_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_marker))
+        if head_catalog:
+            catalogs_kb.row(InlineKeyboardButton("+🗄 Каталог", callback_data=f"add_catalog_{head_catalog}"),
+                           InlineKeyboardButton("+🗒 Знание", callback_data=f"add_note_{head_catalog}"))
+            exit_catalog = db.get_parent_catalog(callback_query.from_user.id, head_catalog)
+            catalogs_kb.add(InlineKeyboardButton("📖 Моя база знаний", callback_data=f"list_notes_{head_catalog}"))
+            catalogs_kb.add(InlineKeyboardButton("❌ Удалить этот Каталог", callback_data=f"del_catalog_{head_catalog}"))
+            catalogs_kb.add(InlineKeyboardButton("⬅️", callback_data=f"list_catalog_{exit_catalog or ''}"))
+            catalog_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_catalog))
         else:
-            markers_kb.add(InlineKeyboardButton("+🗄 Каталог", callback_data="add_marker_"))
-            marker_path = "/"
+            catalogs_kb.add(InlineKeyboardButton("+🗄 Каталог", callback_data="add_catalog_"))
+            catalog_path = "/"
 
-        new_text = f"📚 Cписок Каталогов\nСейчас в {marker_path}"
+        new_text = f"📚 Cписок Каталогов\nСейчас в {catalog_path}"
 
         try:
             await bot.edit_message_text(new_text,
                                         callback_query.from_user.id,
                                         callback_query.message.message_id,
-                                        reply_markup=markers_kb)
+                                        reply_markup=catalogs_kb)
         except aiogram_exceptions.MessageNotModified:
             pass
         except aiogram_exceptions.BadRequest as e:
             if "There is no text in the message to edit" in str(e):
-                await bot.send_message(callback_query.from_user.id, new_text, reply_markup=markers_kb)
+                await bot.send_message(callback_query.from_user.id, new_text, reply_markup=catalogs_kb)
             else:
                 print(f"Unexpected BadRequest: {e}")
 
     if str(callback_query.data).startswith('list_notes_'):
         await state.update_data(last_menu=str(callback_query.data))
         notes_kb = InlineKeyboardMarkup()
-        head_marker = str(callback_query.data).split("_")[-1]
+        head_catalog = str(callback_query.data).split("_")[-1]
 
-        notes = db.get_notes(callback_query.from_user.id, head_marker)
+        notes = db.get_notes(callback_query.from_user.id, head_catalog)
 
-        notes_kb.add(InlineKeyboardButton("+🗒 Добавить знание", callback_data=f"add_note_{head_marker}"))
-        notes_kb.add(InlineKeyboardButton("✏️ Редактировать знание", callback_data=f"edit_note_{head_marker}"))
-        notes_kb.add(InlineKeyboardButton("❌ Удалить знание", callback_data=f"del_note_{head_marker}"))
-        exit_marker = db.get_parent_marker(callback_query.from_user.id, head_marker)
-        notes_kb.add(InlineKeyboardButton("⬅️", callback_data=f"list_marker_{exit_marker}".replace("None", "")))
-        marker_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_marker))
-        await bot.edit_message_text(f"📚 Cписок знаний в {marker_path}:\n"
+        notes_kb.add(InlineKeyboardButton("+🗒 Добавить знание", callback_data=f"add_note_{head_catalog}"))
+        notes_kb.add(InlineKeyboardButton("✏️ Редактировать знание", callback_data=f"edit_note_{head_catalog}"))
+        notes_kb.add(InlineKeyboardButton("❌ Удалить знание", callback_data=f"del_note_{head_catalog}"))
+        exit_catalog = db.get_parent_catalog(callback_query.from_user.id, head_catalog)
+        notes_kb.add(InlineKeyboardButton("⬅️", callback_data=f"list_catalog_{exit_catalog}".replace("None", "")))
+        catalog_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_catalog))
+        await bot.edit_message_text(f"📚 Cписок знаний в {catalog_path}:\n"
                                     f"{nl.join([i['value'] for i in notes])}",
                                     callback_query.from_user.id,
                                     callback_query.message.message_id,
                                     reply_markup=notes_kb)
 
-    if str(callback_query.data).startswith('add_marker_'):
-        await States.add_marker.set()
-        if head_marker_id := str(callback_query.data).split("_")[-1]:
-            await state.update_data(head_marker_id=head_marker_id)
+    if str(callback_query.data).startswith('add_catalog_'):
+        await States.add_catalog.set()
+        if head_catalog_id := str(callback_query.data).split("_")[-1]:
+            await state.update_data(head_catalog_id=head_catalog_id)
         else:
-            await state.update_data(head_marker_id="")
+            await state.update_data(head_catalog_id="")
 
         await bot.edit_message_text("✏️ Введите название Каталога.\nℹ️ Для отмены действия - /start",
                                     callback_query.from_user.id,
@@ -437,21 +432,21 @@ async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext
 
     if str(callback_query.data).startswith('add_note_'):
         await States.add_note.set()
-        if head_marker_id := str(callback_query.data).split("_")[-1]:
-            await state.update_data(head_marker_id=head_marker_id)
+        if head_catalog_id := str(callback_query.data).split("_")[-1]:
+            await state.update_data(head_catalog_id=head_catalog_id)
         else:
-            await state.update_data(head_marker_id="")
+            await state.update_data(head_catalog_id="")
 
         await bot.edit_message_text("✏️ Введите текст знания.\nℹ️ Для отмены действия - /start",
                                     callback_query.from_user.id,
                                     callback_query.message.message_id)
 
-    if str(callback_query.data).startswith('del_marker_'):
+    if str(callback_query.data).startswith('del_catalog_'):
         await state.update_data(last_menu=str(callback_query.data))
-        if marker_id := str(callback_query.data).split("_")[-1]:
-            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=f"list_marker_"))
+        if catalog_id := str(callback_query.data).split("_")[-1]:
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️", callback_data=f"list_catalog_"))
             try:
-                db.delete_marker(user_id=callback_query.from_user.id, marker_id=marker_id)
+                db.delete_catalog(user_id=callback_query.from_user.id, catalog_id=catalog_id)
                 await bot.edit_message_text("✅ | Каталог удалён.",
                                             callback_query.from_user.id,
                                             callback_query.message.message_id,
@@ -466,12 +461,12 @@ async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext
     if str(callback_query.data).startswith('del_note_'):
         await States.del_note.set()
         await state.update_data(last_menu=str(callback_query.data))
-        head_marker = str(callback_query.data).split("_")[-1]
+        head_catalog = str(callback_query.data).split("_")[-1]
 
-        notes = db.get_notes(callback_query.from_user.id, head_marker)
+        notes = db.get_notes(callback_query.from_user.id, head_catalog)
 
-        marker_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_marker))
-        text = f"🗄 | Cписок знаний в {marker_path}:\n"
+        catalog_path = "/" + "/".join(db.get_path(callback_query.from_user.id, head_catalog))
+        text = f"🗄 | Cписок знаний в {catalog_path}:\n"
         for i in range(len(notes)):
             text += nl + f"{i}: {notes[i]['value']}"
 
@@ -480,11 +475,10 @@ async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext
                                     callback_query.from_user.id,
                                     callback_query.message.message_id)
 
-        await state.update_data(in_marker=head_marker)
+        await state.update_data(in_catalog=head_catalog)
 
     await bot.answer_callback_query(callback_query.id)
 
+
 if __name__ == '__main__':
     executor.start_polling(dp)
-
-

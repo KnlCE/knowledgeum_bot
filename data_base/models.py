@@ -13,9 +13,9 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 
-# Определяем класс Marker
-class Marker(Base):
-    __tablename__ = 'marker'
+# Определяем класс catalog
+class Catalog(Base):
+    __tablename__ = 'catalog'
 
     id = Column(Integer, primary_key=True, autoincrement=True, unique=True)
     user_id = Column(String, nullable=False)
@@ -23,14 +23,14 @@ class Marker(Base):
     parent = mapped_column(ForeignKey(f"{__tablename__}.id"), nullable=True)
 
     def get_childs(self):
-        return session.scalars(select(Marker).filter_by(parent=self.id)).fetchall()
+        return session.scalars(select(catalog).filter_by(parent=self.id)).fetchall()
 
     def get_notes(self):
-        return session.scalars(select(Note).filter_by(marker=self.id)).fetchall()
+        return session.scalars(select(Note).filter_by(catalog=self.id)).fetchall()
 
     def to_dict(self):
         return {
-            "marker": self.value,
+            "catalog": self.value,
             "id": self.id,
         }
 
@@ -50,8 +50,8 @@ class Marker(Base):
         for notes in self.get_notes():
             notes.delete()
 
-        marker = session.scalars(select(Marker).where(Marker.id == self.id)).first()
-        session.delete(marker)
+        catalog = session.scalars(select(catalog).where(catalog.id == self.id)).first()
+        session.delete(catalog)
         session.commit()
 
 
@@ -60,7 +60,7 @@ class Note(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, unique=True)
     user_id = Column(String, nullable=False)
     value = Column(String, nullable=False)
-    marker = Column(Integer, ForeignKey('marker.id'), nullable=True)  # Add this line
+    catalog = Column(Integer, ForeignKey('catalog.id'), nullable=True)  # Add this line
 
     def delete(self):
         note = session.scalars(select(Note).where(Note.id == self.id)).first()
@@ -81,38 +81,38 @@ except:
     pass
 
 if __name__ == '__main__':
-    marker1 = Marker(value='Value 1', user_id="12")
-    session.add(marker1)
+    catalog1 = catalog(value='Value 1', user_id="12")
+    session.add(catalog1)
     session.commit()
 
-    marker2 = Marker(value='Value 2', user_id="12", parent=marker1.id)
-    session.add(marker2)
+    catalog2 = catalog(value='Value 2', user_id="12", parent=catalog1.id)
+    session.add(catalog2)
     session.commit()
 
-    marker3 = Marker(value='Value 3', user_id="12", parent=marker2.id)
-    session.add(marker3)
+    catalog3 = catalog(value='Value 3', user_id="12", parent=catalog2.id)
+    session.add(catalog3)
     session.commit()
 
-    marker4 = Marker(value='Value 4', user_id="12", parent=marker1.id)
-    session.add(marker4)
+    catalog4 = catalog(value='Value 4', user_id="12", parent=catalog1.id)
+    session.add(catalog4)
     session.commit()
 
-    marker5 = Marker(value='Value 5', user_id="12", parent=marker4.id)
-    session.add(marker5)
+    catalog5 = catalog(value='Value 5', user_id="12", parent=catalog4.id)
+    session.add(catalog5)
     session.commit()
     #
-    note1 = Note(value='Value 1', marker=marker4.id)
+    note1 = Note(value='Value 1', catalog=catalog4.id)
     session.add(note1)
     session.commit()
 
-    note2 = Note(value='Value 2', marker=marker4.id)
+    note2 = Note(value='Value 2', catalog=catalog4.id)
     session.add(note2)
     session.commit()
 
-    # marker1 = Marker(value='Value 1')
-    # session.add(marker1)
+    # catalog1 = catalog(value='Value 1')
+    # session.add(catalog1)
     # session.commit()
     #
-    # marker2 = Marker(value='Value 2', parent=marker1.id)
-    # session.add(marker2)
+    # catalog2 = catalog(value='Value 2', parent=catalog1.id)
+    # session.add(catalog2)
     # session.commit()

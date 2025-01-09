@@ -3,8 +3,6 @@ from typing import List
 from sqlalchemy import create_engine, select, and_
 from sqlalchemy.orm import sessionmaker
 from fuzzywuzzy import fuzz
-from sqlalchemy import or_
-from .models import Note
 from sqlalchemy.orm import Session
 
 from data_base.models import Marker, Note

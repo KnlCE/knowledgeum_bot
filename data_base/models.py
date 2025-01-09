@@ -1,8 +1,8 @@
 from typing import List
 
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, select, Table, delete
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, select
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import mapped_column, relationship, Mapped
+from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import sessionmaker
 
 # Создаем подключение к базе данных
